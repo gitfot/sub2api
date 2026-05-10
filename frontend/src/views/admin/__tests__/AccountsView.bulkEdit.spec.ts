@@ -150,6 +150,12 @@ describe('admin AccountsView bulk edit scope', () => {
     })
 
     await flushPromises()
+
+    expect(listAccounts).toHaveBeenCalled()
+    expect(listAccounts.mock.calls[0][2]).toMatchObject({
+      status: 'active'
+    })
+
     await wrapper.get('[data-test="edit-filtered"]').trigger('click')
     await flushPromises()
 
