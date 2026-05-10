@@ -33,6 +33,8 @@ type DashboardAggregationRepository interface {
 	RecomputeRange(ctx context.Context, start, end time.Time) error
 	GetAggregationWatermark(ctx context.Context) (time.Time, error)
 	UpdateAggregationWatermark(ctx context.Context, aggregatedAt time.Time) error
+	// CleanupAggregates clears expired pre-aggregation rows, including hourly/daily
+	// dashboard tables and shorter-lived account_request_stats_10m buckets.
 	CleanupAggregates(ctx context.Context, hourlyCutoff, dailyCutoff time.Time) error
 	CleanupUsageLogs(ctx context.Context, cutoff time.Time) error
 	CleanupUsageBillingDedup(ctx context.Context, cutoff time.Time) error

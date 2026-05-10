@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -1454,6 +1455,67 @@ func (r *usageLogRepository) GetDashboardStatsWithRange(ctx context.Context, sta
 	return stats, nil
 }
 
+func (r *usageLogRepository) GetDashboardSuccessRateStats(ctx context.Context, todayStart, historyStart time.Time) (*usagestats.SuccessRateSummary, *usagestats.SuccessRateSummary, error) {
+	query := `
+		WITH history AS (
+			SELECT
+				COALESCE(SUM(success_count), 0) AS success_count,
+				COALESCE(SUM(failed_count), 0) AS failed_count,
+				COALESCE(SUM(request_count), 0) AS request_count
+			FROM account_request_stats_10m
+			WHERE bucket_start >= $1
+		),
+		today AS (
+			SELECT
+				COALESCE(SUM(success_count), 0) AS success_count,
+				COALESCE(SUM(failed_count), 0) AS failed_count,
+				COALESCE(SUM(request_count), 0) AS request_count
+			FROM account_request_stats_10m
+			WHERE bucket_start >= $2
+		)
+		SELECT
+			h.success_count, h.failed_count, h.request_count,
+			t.success_count, t.failed_count, t.request_count
+		FROM history h
+		CROSS JOIN today t
+	`
+
+	var history usagestats.SuccessRateSummary
+	var today usagestats.SuccessRateSummary
+	if err := scanSingleRow(
+		ctx,
+		r.sql,
+		query,
+		[]any{historyStart.UTC(), todayStart.UTC()},
+		&history.SuccessCount,
+		&history.FailedCount,
+		&history.RequestCount,
+		&today.SuccessCount,
+		&today.FailedCount,
+		&today.RequestCount,
+	); err != nil {
+		return nil, nil, err
+	}
+	history.SuccessRate = successRatePtr(history.SuccessCount, history.RequestCount)
+	today.SuccessRate = successRatePtr(today.SuccessCount, today.RequestCount)
+	return &today, &history, nil
+}
+
+func successRatePtr(successCount, requestCount int64) *float64 {
+	if requestCount == 0 {
+		return nil
+	}
+	v := successRateValue(successCount, requestCount)
+	return &v
+}
+
+func successRateValue(successCount, requestCount int64) float64 {
+	if requestCount == 0 {
+		return 0
+	}
+	return math.Round((float64(successCount)/float64(requestCount))*10000) / 100
+}
+
 func (r *usageLogRepository) fillDashboardEntityStats(ctx context.Context, stats *DashboardStats, todayUTC, now time.Time) error {
 	userStatsQuery := `
 		SELECT
@@ -1695,6 +1757,175 @@ func (r *usageLogRepository) fillDashboardUsageStatsFromUsageLogs(ctx context.Co
 	}
 
 	return nil
+}
+
+func (r *usageLogRepository) GetAccountSuccessRateBatch(ctx context.Context, accountIDs []int64) (map[int64]*usagestats.SuccessRateSummary, error) {
+	if len(accountIDs) == 0 {
+		return map[int64]*usagestats.SuccessRateSummary{}, nil
+	}
+
+	query := `
+		SELECT
+			account_id,
+			COALESCE(SUM(success_count), 0) AS success_count,
+			COALESCE(SUM(failed_count), 0) AS failed_count,
+			COALESCE(SUM(request_count), 0) AS request_count
+		FROM account_request_stats_10m
+		WHERE account_id = ANY($1)
+		GROUP BY account_id
+	`
+	rows, err := r.sql.QueryContext(ctx, query, pq.Array(accountIDs))
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	result := make(map[int64]*usagestats.SuccessRateSummary, len(accountIDs))
+	for rows.Next() {
+		var accountID int64
+		var summary usagestats.SuccessRateSummary
+		if err := rows.Scan(&accountID, &summary.SuccessCount, &summary.FailedCount, &summary.RequestCount); err != nil {
+			return nil, err
+		}
+		summary.SuccessRate = successRatePtr(summary.SuccessCount, summary.RequestCount)
+		result[accountID] = &summary
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, accountID := range accountIDs {
+		if _, ok := result[accountID]; !ok {
+			result[accountID] = &usagestats.SuccessRateSummary{}
+		}
+	}
+	return result, nil
+}
+
+func (r *usageLogRepository) GetAccountSuccessRateTrend(
+	ctx context.Context,
+	startTime, endTime time.Time,
+	granularity string,
+	userTZ string,
+	accountID int64,
+) (*usagestats.AccountSuccessRateTrendResponse, error) {
+	startUTC := startTime.UTC()
+	endUTC := endTime.UTC()
+	if !endUTC.After(startUTC) {
+		return nil, errors.New("统计时间范围无效")
+	}
+
+	tzName := strings.TrimSpace(userTZ)
+	if tzName == "" {
+		tzName = resolveUsageStatsTimezone()
+	}
+	loc, err := time.LoadLocation(tzName)
+	if err != nil {
+		loc = time.UTC
+		tzName = "UTC"
+	}
+
+	bucketExpr := "(ars.bucket_start AT TIME ZONE $3) AT TIME ZONE $3"
+	switch granularity {
+	case "1h":
+		bucketExpr = "date_trunc('hour', ars.bucket_start AT TIME ZONE $3) AT TIME ZONE $3"
+	case "1d":
+		bucketExpr = "date_trunc('day', ars.bucket_start AT TIME ZONE $3) AT TIME ZONE $3"
+	case "10m":
+		bucketExpr = "(ars.bucket_start AT TIME ZONE $3) AT TIME ZONE $3"
+	default:
+		return nil, fmt.Errorf("invalid success-rate granularity %q", granularity)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT
+			%s AS grouped_bucket_start,
+			ars.account_id,
+			a.name AS account_name,
+			COALESCE(SUM(ars.success_count), 0) AS success_count,
+			COALESCE(SUM(ars.failed_count), 0) AS failed_count,
+			COALESCE(SUM(ars.request_count), 0) AS request_count,
+			MAX(ars.computed_at) AS computed_at
+		FROM account_request_stats_10m ars
+		JOIN accounts a ON a.id = ars.account_id
+		WHERE ars.bucket_start >= $1
+		  AND ars.bucket_start < $2
+		  AND a.deleted_at IS NULL
+		  AND a.status = $4
+		  AND a.schedulable = TRUE
+	`, bucketExpr)
+	args := []any{startUTC, endUTC, tzName, service.StatusActive}
+	if accountID > 0 {
+		query += "\n\t\t  AND ars.account_id = $5"
+		args = append(args, accountID)
+	}
+	query += `
+		GROUP BY 1, ars.account_id, a.name
+		ORDER BY 1 ASC, ars.account_id ASC
+	`
+
+	rows, err := r.sql.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	resp := &usagestats.AccountSuccessRateTrendResponse{
+		Bucket: granularity,
+	}
+	var (
+		currentBucket    time.Time
+		currentPoint     *usagestats.AccountSuccessRateTrendPoint
+		latestComputedAt time.Time
+	)
+	for rows.Next() {
+		var (
+			bucketStart  time.Time
+			accountID    int64
+			accountName  string
+			successCount int64
+			failedCount  int64
+			requestCount int64
+			computedAt   time.Time
+		)
+		if err := rows.Scan(&bucketStart, &accountID, &accountName, &successCount, &failedCount, &requestCount, &computedAt); err != nil {
+			return nil, err
+		}
+
+		if currentPoint == nil || !bucketStart.Equal(currentBucket) {
+			resp.Points = append(resp.Points, usagestats.AccountSuccessRateTrendPoint{
+				BucketStart: bucketStart.In(loc).Format(time.RFC3339),
+			})
+			currentPoint = &resp.Points[len(resp.Points)-1]
+			currentBucket = bucketStart
+		}
+
+		currentPoint.SuccessCount += successCount
+		currentPoint.FailedCount += failedCount
+		currentPoint.RequestCount += requestCount
+		currentPoint.Accounts = append(currentPoint.Accounts, usagestats.AccountSuccessRateTrendAccount{
+			AccountID:    accountID,
+			AccountName:  accountName,
+			SuccessCount: successCount,
+			FailedCount:  failedCount,
+			RequestCount: requestCount,
+			SuccessRate:  successRatePtr(successCount, requestCount),
+		})
+
+		if computedAt.After(latestComputedAt) {
+			latestComputedAt = computedAt
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range resp.Points {
+		resp.Points[i].SuccessRate = successRateValue(resp.Points[i].SuccessCount, resp.Points[i].RequestCount)
+	}
+	if !latestComputedAt.IsZero() {
+		resp.ComputedAt = latestComputedAt.UTC().Format(time.RFC3339)
+		resp.Stale = time.Since(latestComputedAt.UTC()) > 15*time.Minute
+	}
+	return resp, nil
 }
 
 func (r *usageLogRepository) ListByAccount(ctx context.Context, accountID int64, params pagination.PaginationParams) ([]service.UsageLog, *pagination.PaginationResult, error) {

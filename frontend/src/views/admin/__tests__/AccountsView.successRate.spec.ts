@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 
 import AccountsView from '../AccountsView.vue'
@@ -7,12 +7,14 @@ const {
   listAccounts,
   listWithEtag,
   getBatchTodayStats,
+  getBatchSuccessRates,
   getAllProxies,
   getAllGroups
 } = vi.hoisted(() => ({
   listAccounts: vi.fn(),
   listWithEtag: vi.fn(),
   getBatchTodayStats: vi.fn(),
+  getBatchSuccessRates: vi.fn(),
   getAllProxies: vi.fn(),
   getAllGroups: vi.fn()
 }))
@@ -23,6 +25,7 @@ vi.mock('@/api/admin', () => ({
       list: listAccounts,
       listWithEtag,
       getBatchTodayStats,
+      getBatchSuccessRates,
       delete: vi.fn(),
       batchClearError: vi.fn(),
       batchRefresh: vi.fn(),
@@ -47,7 +50,8 @@ vi.mock('@/stores/app', () => ({
 
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({
-    token: 'test-token'
+    token: 'test-token',
+    isSimpleMode: false
   })
 }))
 
@@ -66,33 +70,34 @@ const DataTableStub = {
   template: '<div data-test="data-table"></div>'
 }
 
-const AccountBulkActionsBarStub = {
-  props: ['selectedIds'],
-  emits: ['edit-filtered'],
-  template: '<button data-test="edit-filtered" @click="$emit(\'edit-filtered\')">edit filtered</button>'
-}
+describe('admin AccountsView success rate column', () => {
+  const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-const BulkEditAccountModalStub = {
-  props: ['show', 'target'],
-  template: '<div data-test="bulk-edit-modal" :data-show="String(show)" :data-target-mode="target?.mode ?? \'\'"></div>'
-}
-
-describe('admin AccountsView bulk edit scope', () => {
   beforeEach(() => {
     localStorage.clear()
 
     listAccounts.mockReset()
     listWithEtag.mockReset()
     getBatchTodayStats.mockReset()
+    getBatchSuccessRates.mockReset()
     getAllProxies.mockReset()
     getAllGroups.mockReset()
 
     listAccounts.mockResolvedValue({
-      items: [],
-      total: 0,
+      items: [
+        {
+          id: 101,
+          name: 'claude-01',
+          platform: 'openai',
+          type: 'apikey',
+          status: 'active',
+          schedulable: true
+        }
+      ],
+      total: 1,
       page: 1,
       page_size: 20,
-      pages: 0
+      pages: 1
     })
     listWithEtag.mockResolvedValue({
       notModified: true,
@@ -100,11 +105,16 @@ describe('admin AccountsView bulk edit scope', () => {
       data: null
     })
     getBatchTodayStats.mockResolvedValue({ stats: {} })
+    getBatchSuccessRates.mockRejectedValueOnce(new Error('boom'))
     getAllProxies.mockResolvedValue([])
     getAllGroups.mockResolvedValue([])
   })
 
-  it('opens bulk edit in filtered-results mode from the bulk actions dropdown', async () => {
+  afterEach(() => {
+    consoleErrorSpy.mockClear()
+  })
+
+  it('fetches current-page success rates without blocking the account table', async () => {
     const wrapper = mount(AccountsView, {
       global: {
         stubs: {
@@ -117,7 +127,7 @@ describe('admin AccountsView bulk edit scope', () => {
           ConfirmDialog: true,
           AccountTableActions: { template: '<div><slot name="beforeCreate" /><slot name="after" /></div>' },
           AccountTableFilters: { template: '<div></div>' },
-          AccountBulkActionsBar: AccountBulkActionsBarStub,
+          AccountBulkActionsBar: true,
           AccountActionMenu: true,
           ImportDataModal: true,
           ReAuthAccountModal: true,
@@ -130,7 +140,7 @@ describe('admin AccountsView bulk edit scope', () => {
           TLSFingerprintProfilesModal: true,
           CreateAccountModal: true,
           EditAccountModal: true,
-          BulkEditAccountModal: BulkEditAccountModalStub,
+          BulkEditAccountModal: true,
           PlatformTypeBadge: true,
           AccountCapacityCell: true,
           AccountStatusIndicator: true,
@@ -145,15 +155,8 @@ describe('admin AccountsView bulk edit scope', () => {
 
     await flushPromises()
 
+    expect(wrapper.get('[data-test="data-table"]').exists()).toBe(true)
     expect(listAccounts).toHaveBeenCalled()
-    expect(listAccounts.mock.calls[0][2]).toMatchObject({
-      status: 'active'
-    })
-
-    await wrapper.get('[data-test="edit-filtered"]').trigger('click')
-    await flushPromises()
-
-    expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-show')).toBe('true')
-    expect(wrapper.get('[data-test="bulk-edit-modal"]').attributes('data-target-mode')).toBe('filtered')
+    expect(getBatchSuccessRates).toHaveBeenCalledWith([101])
   })
 })

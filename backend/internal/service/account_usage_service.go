@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -81,6 +82,10 @@ type UsageLogRepository interface {
 
 type accountWindowStatsBatchReader interface {
 	GetAccountWindowStatsBatch(ctx context.Context, accountIDs []int64, startTime time.Time) (map[int64]*usagestats.AccountStats, error)
+}
+
+type accountSuccessRateBatchReader interface {
+	GetAccountSuccessRateBatch(ctx context.Context, accountIDs []int64) (map[int64]*usagestats.SuccessRateSummary, error)
 }
 
 // apiUsageCache 缓存从 Anthropic API 获取的使用率数据（utilization, resets_at）
@@ -1334,4 +1339,24 @@ func buildGeminiUsageProgress(used, limit int64, resetAt time.Time, tokens int64
 // 用于账号列表页面显示当前窗口费用
 func (s *AccountUsageService) GetAccountWindowStats(ctx context.Context, accountID int64, startTime time.Time) (*usagestats.AccountStats, error) {
 	return s.usageLogRepo.GetAccountWindowStats(ctx, accountID, startTime)
+}
+
+func (s *AccountUsageService) GetHistorySuccessRateBatch(ctx context.Context, accountIDs []int64) (map[int64]*usagestats.SuccessRateSummary, error) {
+	return s.GetAccountSuccessRateBatch(ctx, accountIDs)
+}
+
+func (s *AccountUsageService) GetAccountSuccessRateBatch(ctx context.Context, accountIDs []int64) (map[int64]*usagestats.SuccessRateSummary, error) {
+	if len(accountIDs) == 0 {
+		return map[int64]*usagestats.SuccessRateSummary{}, nil
+	}
+
+	if repo, ok := s.usageLogRepo.(accountSuccessRateBatchReader); ok {
+		summaries, err := repo.GetAccountSuccessRateBatch(ctx, accountIDs)
+		if err != nil {
+			return nil, fmt.Errorf("get account success rate batch: %w", err)
+		}
+		return summaries, nil
+	}
+
+	return nil, errors.New("account success rate batch is not implemented")
 }

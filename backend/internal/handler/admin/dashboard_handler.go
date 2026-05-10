@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strconv"
@@ -20,6 +21,14 @@ type DashboardHandler struct {
 	dashboardService   *service.DashboardService
 	aggregationService *service.DashboardAggregationService
 	startTime          time.Time // Server start time for uptime calculation
+}
+
+type accountSuccessRateTrendCacheKey struct {
+	StartTime   string `json:"start_time"`
+	EndTime     string `json:"end_time"`
+	Granularity string `json:"granularity"`
+	Timezone    string `json:"timezone"`
+	AccountID   int64  `json:"account_id,omitempty"`
 }
 
 // NewDashboardHandler creates a new admin dashboard handler
@@ -112,6 +121,10 @@ func (h *DashboardHandler) GetStats(c *gin.Context) {
 		"today_tokens":                stats.TodayTokens,
 		"today_cost":                  stats.TodayCost,       // 今日标准计费
 		"today_actual_cost":           stats.TodayActualCost, // 今日实际扣除
+		"today_success_count":         stats.TodaySuccessCount,
+		"today_failed_count":          stats.TodayFailedCount,
+		"today_success_rate":          stats.TodaySuccessRate,
+		"history_success_rate":        stats.HistorySuccessRate,
 
 		// 系统运行统计
 		"average_duration_ms": stats.AverageDurationMs,
@@ -263,6 +276,68 @@ func (h *DashboardHandler) GetUsageTrend(c *gin.Context) {
 		"end_date":    endTime.Add(-24 * time.Hour).Format("2006-01-02"),
 		"granularity": granularity,
 	})
+}
+
+func normalizeAccountSuccessRateGranularity(raw string) (string, error) {
+	switch strings.TrimSpace(strings.ToLower(raw)) {
+	case "", "1d", "day":
+		return "1d", nil
+	case "1h", "hour":
+		return "1h", nil
+	case "10m":
+		return "10m", nil
+	default:
+		return "", errors.New("Invalid granularity, use 10m, 1h, or 1d")
+	}
+}
+
+func (h *DashboardHandler) getAccountSuccessRateTrendCached(
+	ctx context.Context,
+	startTime, endTime time.Time,
+	granularity string,
+	userTZ string,
+	accountID int64,
+) (*usagestats.AccountSuccessRateTrendResponse, bool, error) {
+	key := mustMarshalDashboardCacheKey(accountSuccessRateTrendCacheKey{
+		StartTime:   startTime.UTC().Format(time.RFC3339),
+		EndTime:     endTime.UTC().Format(time.RFC3339),
+		Granularity: granularity,
+		Timezone:    strings.TrimSpace(userTZ),
+		AccountID:   accountID,
+	})
+	entry, hit, err := dashboardSuccessRateTrendCache.GetOrLoad(key, func() (any, error) {
+		return h.dashboardService.GetAccountSuccessRateTrend(ctx, startTime, endTime, granularity, userTZ, accountID)
+	})
+	if err != nil {
+		return nil, hit, err
+	}
+	trend, err := snapshotPayloadAs[*usagestats.AccountSuccessRateTrendResponse](entry.Payload)
+	return trend, hit, err
+}
+
+// GetAccountSuccessRateTrend handles getting aggregate-backed account success-rate trend data.
+// GET /api/v1/admin/dashboard/account-success-rate-trend
+func (h *DashboardHandler) GetAccountSuccessRateTrend(c *gin.Context) {
+	startTime, endTime := parseTimeRange(c)
+	granularity, err := normalizeAccountSuccessRateGranularity(c.DefaultQuery("granularity", "1d"))
+	if err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+	var accountID int64
+	if accountIDStr := c.Query("account_id"); accountIDStr != "" {
+		if id, err := strconv.ParseInt(accountIDStr, 10, 64); err == nil {
+			accountID = id
+		}
+	}
+
+	trend, hit, err := h.getAccountSuccessRateTrendCached(c.Request.Context(), startTime, endTime, granularity, c.Query("timezone"), accountID)
+	if err != nil {
+		response.Error(c, 500, "Failed to get account success rate trend")
+		return
+	}
+	c.Header("X-Snapshot-Cache", cacheStatusValue(hit))
+	response.Success(c, trend)
 }
 
 // GetModelStats handles getting model usage statistics

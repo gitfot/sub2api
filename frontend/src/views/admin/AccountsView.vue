@@ -270,6 +270,13 @@
               :error="todayStatsError"
             />
           </template>
+          <template #cell-success_rate="{ row }">
+            <AccountSuccessRateCell
+              :stats="successRateByAccountId[String(row.id)] ?? null"
+              :loading="successRateLoading"
+              :error="successRateError"
+            />
+          </template>
           <template #cell-groups="{ row }">
             <AccountGroupsCell :groups="row.groups" :max-display="4" />
           </template>
@@ -403,6 +410,7 @@ import type { SelectOption } from '@/components/common/Select.vue'
 import AccountStatusIndicator from '@/components/account/AccountStatusIndicator.vue'
 import AccountUsageCell from '@/components/account/AccountUsageCell.vue'
 import AccountTodayStatsCell from '@/components/account/AccountTodayStatsCell.vue'
+import AccountSuccessRateCell from '@/components/account/AccountSuccessRateCell.vue'
 import AccountGroupsCell from '@/components/account/AccountGroupsCell.vue'
 import AccountCapacityCell from '@/components/account/AccountCapacityCell.vue'
 import PlatformTypeBadge from '@/components/common/PlatformTypeBadge.vue'
@@ -411,7 +419,16 @@ import ErrorPassthroughRulesModal from '@/components/admin/ErrorPassthroughRules
 import TLSFingerprintProfilesModal from '@/components/admin/TLSFingerprintProfilesModal.vue'
 import { buildOpenAIUsageRefreshKey } from '@/utils/accountUsageRefresh'
 import { formatDateTime, formatRelativeTime } from '@/utils/format'
-import type { Account, AccountPlatform, AccountType, Proxy as AccountProxy, AdminGroup, WindowStats, ClaudeModel } from '@/types'
+import type {
+  Account,
+  AccountPlatform,
+  AccountType,
+  Proxy as AccountProxy,
+  AdminGroup,
+  WindowStats,
+  ClaudeModel,
+  SuccessRateSummary
+} from '@/types'
 
 const { t } = useI18n()
 const appStore = useAppStore()
@@ -547,6 +564,11 @@ const todayStatsLoading = ref(false)
 const todayStatsError = ref<string | null>(null)
 const todayStatsReqSeq = ref(0)
 const pendingTodayStatsRefresh = ref(false)
+const successRateByAccountId = ref<Record<string, SuccessRateSummary>>({})
+const successRateLoading = ref(false)
+const successRateError = ref<string | null>(null)
+const successRateReqSeq = ref(0)
+const pendingSuccessRateRefresh = ref(false)
 const usageManualRefreshToken = ref(0)
 
 const buildDefaultTodayStats = (): WindowStats => ({
@@ -555,6 +577,13 @@ const buildDefaultTodayStats = (): WindowStats => ({
   cost: 0,
   standard_cost: 0,
   user_cost: 0
+})
+
+const buildDefaultSuccessRateSummary = (): SuccessRateSummary => ({
+  success_count: 0,
+  failed_count: 0,
+  request_count: 0,
+  success_rate: null
 })
 
 const refreshTodayStatsBatch = async () => {
@@ -597,6 +626,46 @@ const refreshTodayStatsBatch = async () => {
   } finally {
     if (reqSeq === todayStatsReqSeq.value) {
       todayStatsLoading.value = false
+    }
+  }
+}
+
+const refreshSuccessRatesBatch = async () => {
+  if (hiddenColumns.has('success_rate')) {
+    successRateLoading.value = false
+    successRateError.value = null
+    return
+  }
+
+  const accountIDs = accounts.value.map(account => account.id)
+  const reqSeq = ++successRateReqSeq.value
+  if (accountIDs.length === 0) {
+    successRateByAccountId.value = {}
+    successRateError.value = null
+    successRateLoading.value = false
+    return
+  }
+
+  successRateLoading.value = true
+  successRateError.value = null
+
+  try {
+    const result = await adminAPI.accounts.getBatchSuccessRates(accountIDs)
+    if (reqSeq !== successRateReqSeq.value) return
+    const serverStats = result.stats ?? {}
+    const nextStats: Record<string, SuccessRateSummary> = {}
+    for (const accountID of accountIDs) {
+      const key = String(accountID)
+      nextStats[key] = serverStats[key] ?? buildDefaultSuccessRateSummary()
+    }
+    successRateByAccountId.value = nextStats
+  } catch (error) {
+    if (reqSeq !== successRateReqSeq.value) return
+    successRateError.value = t('common.failed')
+    console.error('Failed to load account success rates:', error)
+  } finally {
+    if (reqSeq === successRateReqSeq.value) {
+      successRateLoading.value = false
     }
   }
 }
@@ -705,6 +774,11 @@ const toggleColumn = (key: string) => {
       console.error('Failed to load account today stats after showing column:', error)
     })
   }
+  if (key === 'success_rate' && wasHidden) {
+    refreshSuccessRatesBatch().catch((error) => {
+      console.error('Failed to load account success rates after showing column:', error)
+    })
+  }
 }
 
 const isColumnVisible = (key: string) => !hiddenColumns.has(key)
@@ -775,6 +849,7 @@ const load = async () => {
   hasPendingListSync.value = false
   resetAutoRefreshCache()
   pendingTodayStatsRefresh.value = false
+  pendingSuccessRateRefresh.value = false
   if (isFirstLoad.value) {
     requestParams.lite = '1'
   }
@@ -783,21 +858,23 @@ const load = async () => {
     isFirstLoad.value = false
     delete requestParams.lite
   }
-  await refreshTodayStatsBatch()
+  await Promise.all([refreshTodayStatsBatch(), refreshSuccessRatesBatch()])
 }
 
 const reload = async () => {
   hasPendingListSync.value = false
   resetAutoRefreshCache()
   pendingTodayStatsRefresh.value = false
+  pendingSuccessRateRefresh.value = false
   await baseReload()
-  await refreshTodayStatsBatch()
+  await Promise.all([refreshTodayStatsBatch(), refreshSuccessRatesBatch()])
 }
 
 const debouncedReload = () => {
   hasPendingListSync.value = false
   resetAutoRefreshCache()
   pendingTodayStatsRefresh.value = true
+  pendingSuccessRateRefresh.value = true
   baseDebouncedReload()
 }
 
@@ -805,6 +882,7 @@ const handlePageChange = (page: number) => {
   hasPendingListSync.value = false
   resetAutoRefreshCache()
   pendingTodayStatsRefresh.value = true
+  pendingSuccessRateRefresh.value = true
   baseHandlePageChange(page)
 }
 
@@ -812,6 +890,7 @@ const handlePageSizeChange = (size: number) => {
   hasPendingListSync.value = false
   resetAutoRefreshCache()
   pendingTodayStatsRefresh.value = true
+  pendingSuccessRateRefresh.value = true
   baseHandlePageSizeChange(size)
 }
 
@@ -825,14 +904,16 @@ const handleSort = (key: string, order: AccountSortOrder) => {
   hasPendingListSync.value = false
   resetAutoRefreshCache()
   pendingTodayStatsRefresh.value = true
+  pendingSuccessRateRefresh.value = true
   load()
 }
 
 watch(loading, (isLoading, wasLoading) => {
-  if (wasLoading && !isLoading && pendingTodayStatsRefresh.value) {
+  if (wasLoading && !isLoading && (pendingTodayStatsRefresh.value || pendingSuccessRateRefresh.value)) {
     pendingTodayStatsRefresh.value = false
-    refreshTodayStatsBatch().catch((error) => {
-      console.error('Failed to refresh account today stats after table load:', error)
+    pendingSuccessRateRefresh.value = false
+    Promise.all([refreshTodayStatsBatch(), refreshSuccessRatesBatch()]).catch((error) => {
+      console.error('Failed to refresh account stats after table load:', error)
     })
   }
 })
@@ -949,7 +1030,7 @@ const refreshAccountsIncrementally = async () => {
       hasPendingListSync.value = false
     }
 
-    await refreshTodayStatsBatch()
+    await Promise.all([refreshTodayStatsBatch(), refreshSuccessRatesBatch()])
   } catch (error) {
     console.error('Auto refresh failed:', error)
   } finally {
@@ -1116,7 +1197,8 @@ const allColumns = computed(() => {
     { key: 'capacity', label: t('admin.accounts.columns.capacity'), sortable: false },
     { key: 'status', label: t('admin.accounts.columns.status'), sortable: true },
     { key: 'schedulable', label: t('admin.accounts.columns.schedulable'), sortable: true },
-    { key: 'today_stats', label: t('admin.accounts.columns.todayStats'), sortable: false }
+    { key: 'today_stats', label: t('admin.accounts.columns.todayStats'), sortable: false },
+    { key: 'success_rate', label: t('admin.accounts.columns.successRate'), sortable: false }
   ]
   if (!authStore.isSimpleMode) {
     c.push({ key: 'groups', label: t('admin.accounts.columns.groups'), sortable: false })

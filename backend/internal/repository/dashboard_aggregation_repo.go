@@ -51,8 +51,16 @@ func (r *dashboardAggregationRepository) AggregateRange(ctx context.Context, sta
 	loc := timezone.Location()
 	startLocal := start.In(loc)
 	endLocal := end.In(loc)
+	startUTC := start.UTC()
+	endUTC := end.UTC()
 	if !endLocal.After(startLocal) {
 		return nil
+	}
+
+	account10mStart := startUTC.Truncate(10 * time.Minute)
+	account10mEnd := endUTC.Truncate(10 * time.Minute)
+	if endUTC.After(account10mEnd) {
+		account10mEnd = account10mEnd.Add(10 * time.Minute)
 	}
 
 	hourStart := startLocal.Truncate(time.Hour)
@@ -73,16 +81,16 @@ func (r *dashboardAggregationRepository) AggregateRange(ctx context.Context, sta
 			return err
 		}
 		txRepo := newDashboardAggregationRepositoryWithSQL(tx)
-		if err := txRepo.aggregateRangeInTx(ctx, hourStart, hourEnd, dayStart, dayEnd); err != nil {
+		if err := txRepo.aggregateRangeInTx(ctx, hourStart, hourEnd, dayStart, dayEnd, account10mStart, account10mEnd); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
 		return tx.Commit()
 	}
-	return r.aggregateRangeInTx(ctx, hourStart, hourEnd, dayStart, dayEnd)
+	return r.aggregateRangeInTx(ctx, hourStart, hourEnd, dayStart, dayEnd, account10mStart, account10mEnd)
 }
 
-func (r *dashboardAggregationRepository) aggregateRangeInTx(ctx context.Context, hourStart, hourEnd, dayStart, dayEnd time.Time) error {
+func (r *dashboardAggregationRepository) aggregateRangeInTx(ctx context.Context, hourStart, hourEnd, dayStart, dayEnd, account10mStart, account10mEnd time.Time) error {
 	// 以桶边界聚合，允许覆盖 end 所在桶的剩余区间。
 	if err := r.insertHourlyActiveUsers(ctx, hourStart, hourEnd); err != nil {
 		return err
@@ -96,6 +104,9 @@ func (r *dashboardAggregationRepository) aggregateRangeInTx(ctx context.Context,
 	if err := r.upsertDailyAggregates(ctx, dayStart, dayEnd); err != nil {
 		return err
 	}
+	if err := r.upsertAccountRequestStats10m(ctx, account10mStart, account10mEnd); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -106,8 +117,16 @@ func (r *dashboardAggregationRepository) RecomputeRange(ctx context.Context, sta
 	loc := timezone.Location()
 	startLocal := start.In(loc)
 	endLocal := end.In(loc)
+	startUTC := start.UTC()
+	endUTC := end.UTC()
 	if !endLocal.After(startLocal) {
 		return nil
+	}
+
+	account10mStart := startUTC.Truncate(10 * time.Minute)
+	account10mEnd := endUTC.Truncate(10 * time.Minute)
+	if endUTC.After(account10mEnd) {
+		account10mEnd = account10mEnd.Add(10 * time.Minute)
 	}
 
 	hourStart := startLocal.Truncate(time.Hour)
@@ -129,16 +148,16 @@ func (r *dashboardAggregationRepository) RecomputeRange(ctx context.Context, sta
 			return err
 		}
 		txRepo := newDashboardAggregationRepositoryWithSQL(tx)
-		if err := txRepo.recomputeRangeInTx(ctx, hourStart, hourEnd, dayStart, dayEnd); err != nil {
+		if err := txRepo.recomputeRangeInTx(ctx, hourStart, hourEnd, dayStart, dayEnd, account10mStart, account10mEnd); err != nil {
 			_ = tx.Rollback()
 			return err
 		}
 		return tx.Commit()
 	}
-	return r.recomputeRangeInTx(ctx, hourStart, hourEnd, dayStart, dayEnd)
+	return r.recomputeRangeInTx(ctx, hourStart, hourEnd, dayStart, dayEnd, account10mStart, account10mEnd)
 }
 
-func (r *dashboardAggregationRepository) recomputeRangeInTx(ctx context.Context, hourStart, hourEnd, dayStart, dayEnd time.Time) error {
+func (r *dashboardAggregationRepository) recomputeRangeInTx(ctx context.Context, hourStart, hourEnd, dayStart, dayEnd, account10mStart, account10mEnd time.Time) error {
 	// 先清空范围内桶，再重建（避免仅增量插入导致活跃用户等指标无法回退）。
 	if _, err := r.sql.ExecContext(ctx, "DELETE FROM usage_dashboard_hourly WHERE bucket_start >= $1 AND bucket_start < $2", hourStart, hourEnd); err != nil {
 		return err
@@ -152,6 +171,9 @@ func (r *dashboardAggregationRepository) recomputeRangeInTx(ctx context.Context,
 	if _, err := r.sql.ExecContext(ctx, "DELETE FROM usage_dashboard_daily_users WHERE bucket_date >= $1::date AND bucket_date < $2::date", dayStart, dayEnd); err != nil {
 		return err
 	}
+	if _, err := r.sql.ExecContext(ctx, "DELETE FROM account_request_stats_10m WHERE bucket_start >= $1 AND bucket_start < $2", account10mStart, account10mEnd); err != nil {
+		return err
+	}
 
 	if err := r.insertHourlyActiveUsers(ctx, hourStart, hourEnd); err != nil {
 		return err
@@ -163,6 +185,9 @@ func (r *dashboardAggregationRepository) recomputeRangeInTx(ctx context.Context,
 		return err
 	}
 	if err := r.upsertDailyAggregates(ctx, dayStart, dayEnd); err != nil {
+		return err
+	}
+	if err := r.upsertAccountRequestStats10m(ctx, account10mStart, account10mEnd); err != nil {
 		return err
 	}
 	return nil
@@ -198,6 +223,9 @@ func (r *dashboardAggregationRepository) CleanupAggregates(ctx context.Context, 
 		return err
 	}
 	if _, err := r.sql.ExecContext(ctx, "DELETE FROM usage_dashboard_hourly_users WHERE bucket_start < $1", hourlyCutoffUTC); err != nil {
+		return err
+	}
+	if _, err := r.sql.ExecContext(ctx, "DELETE FROM account_request_stats_10m WHERE bucket_start < $1", hourlyCutoffUTC); err != nil {
 		return err
 	}
 	if _, err := r.sql.ExecContext(ctx, "DELETE FROM usage_dashboard_daily WHERE bucket_date < $1::date", dailyCutoffUTC); err != nil {
@@ -459,6 +487,75 @@ func (r *dashboardAggregationRepository) upsertDailyAggregates(ctx context.Conte
 			computed_at = EXCLUDED.computed_at
 	`
 	_, err := r.sql.ExecContext(ctx, query, start, end, start, end, tzName)
+	return err
+}
+
+func (r *dashboardAggregationRepository) upsertAccountRequestStats10m(ctx context.Context, start, end time.Time) error {
+	query := `
+		WITH successes AS (
+			SELECT
+				date_bin('10 minutes', created_at, TIMESTAMPTZ '1970-01-01 00:00:00+00') AS bucket_start,
+				account_id,
+				COUNT(*) AS success_count,
+				0::bigint AS failed_count
+			FROM usage_logs
+			WHERE created_at >= $1
+			  AND created_at < $2
+			  AND account_id IS NOT NULL
+			  AND COALESCE(inbound_endpoint, '') NOT LIKE '%/count_tokens'
+			GROUP BY 1, 2
+		),
+		failures AS (
+			SELECT
+				date_bin('10 minutes', created_at, TIMESTAMPTZ '1970-01-01 00:00:00+00') AS bucket_start,
+				account_id,
+				0::bigint AS success_count,
+				COUNT(*) AS failed_count
+			FROM ops_error_logs
+			WHERE created_at >= $1
+			  AND created_at < $2
+			  AND account_id IS NOT NULL
+			  AND COALESCE(status_code, 0) >= 400
+			  AND is_count_tokens = FALSE
+			GROUP BY 1, 2
+		),
+		combined AS (
+			SELECT
+				bucket_start,
+				account_id,
+				COALESCE(SUM(success_count), 0) AS success_count,
+				COALESCE(SUM(failed_count), 0) AS failed_count
+			FROM (
+				SELECT bucket_start, account_id, success_count, failed_count FROM successes
+				UNION ALL
+				SELECT bucket_start, account_id, success_count, failed_count FROM failures
+			) buckets
+			GROUP BY 1, 2
+		)
+		INSERT INTO account_request_stats_10m (
+			bucket_start,
+			account_id,
+			success_count,
+			failed_count,
+			request_count,
+			computed_at
+		)
+		SELECT
+			bucket_start,
+			account_id,
+			success_count,
+			failed_count,
+			success_count + failed_count AS request_count,
+			NOW()
+		FROM combined
+		ON CONFLICT (bucket_start, account_id)
+		DO UPDATE SET
+			success_count = EXCLUDED.success_count,
+			failed_count = EXCLUDED.failed_count,
+			request_count = EXCLUDED.request_count,
+			computed_at = EXCLUDED.computed_at
+	`
+	_, err := r.sql.ExecContext(ctx, query, start, end)
 	return err
 }
 

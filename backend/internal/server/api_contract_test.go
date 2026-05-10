@@ -1108,6 +1108,191 @@ func TestAPIContracts(t *testing.T) {
 				}
 			}`,
 		},
+		{
+			name: "GET /api/v1/admin/dashboard/stats",
+			setup: func(t *testing.T, deps *contractDeps) {
+				t.Helper()
+				rate := 75.0
+				historyRate := 80.0
+				deps.usageRepo.dashboardStats = &usagestats.DashboardStats{
+					TotalUsers:         3,
+					TodayNewUsers:      1,
+					ActiveUsers:        2,
+					TotalAPIKeys:       4,
+					ActiveAPIKeys:      3,
+					TotalAccounts:      5,
+					NormalAccounts:     4,
+					ErrorAccounts:      1,
+					RateLimitAccounts:  0,
+					OverloadAccounts:   0,
+					TotalRequests:      30,
+					TotalInputTokens:   100,
+					TotalOutputTokens:  200,
+					TotalTokens:        300,
+					TotalCost:          1.5,
+					TotalActualCost:    1.25,
+					TodayRequests:      10,
+					TodayInputTokens:   40,
+					TodayOutputTokens:  60,
+					TodayTokens:        100,
+					TodayCost:          0.5,
+					TodayActualCost:    0.4,
+					TodaySuccessCount:  9,
+					TodayFailedCount:   3,
+					TodaySuccessRate:   &rate,
+					HistorySuccessRate: &historyRate,
+					AverageDurationMs:  123,
+					Rpm:                7,
+					Tpm:                70,
+					HourlyActiveUsers:  2,
+					StatsUpdatedAt:     "2025-01-02T03:04:05Z",
+					StatsStale:         false,
+				}
+			},
+			method:     http.MethodGet,
+			path:       "/api/v1/admin/dashboard/stats",
+			wantStatus: http.StatusOK,
+			wantJSON: `{
+				"code": 0,
+				"message": "success",
+				"data": {
+					"total_users": 3,
+					"today_new_users": 1,
+					"active_users": 2,
+					"total_api_keys": 4,
+					"active_api_keys": 3,
+					"total_accounts": 5,
+					"normal_accounts": 4,
+					"error_accounts": 1,
+					"ratelimit_accounts": 0,
+					"overload_accounts": 0,
+					"total_requests": 30,
+					"total_input_tokens": 100,
+					"total_output_tokens": 200,
+					"total_cache_creation_tokens": 0,
+					"total_cache_read_tokens": 0,
+					"total_tokens": 300,
+					"total_cost": 1.5,
+					"total_actual_cost": 1.25,
+					"today_requests": 10,
+					"today_input_tokens": 40,
+					"today_output_tokens": 60,
+					"today_cache_creation_tokens": 0,
+					"today_cache_read_tokens": 0,
+					"today_tokens": 100,
+					"today_cost": 0.5,
+					"today_actual_cost": 0.4,
+					"today_success_count": 9,
+					"today_failed_count": 3,
+					"today_success_rate": 75,
+					"history_success_rate": 80,
+					"average_duration_ms": 123,
+					"rpm": 7,
+					"tpm": 70,
+					"hourly_active_users": 2,
+					"stats_updated_at": "2025-01-02T03:04:05Z",
+					"stats_stale": true,
+					"uptime": 0
+				}
+			}`,
+		},
+		{
+			name:       "POST /api/v1/admin/accounts/success-rate/batch empty ids",
+			method:     http.MethodPost,
+			path:       "/api/v1/admin/accounts/success-rate/batch",
+			body:       `{"account_ids":[]}`,
+			wantStatus: http.StatusOK,
+			headers: map[string]string{
+				"Content-Type": "application/json",
+			},
+			wantJSON: `{
+				"code": 0,
+				"message": "success",
+				"data": {
+					"stats": {}
+				}
+			}`,
+		},
+		{
+			name: "GET /api/v1/admin/dashboard/account-success-rate-trend",
+			setup: func(t *testing.T, deps *contractDeps) {
+				t.Helper()
+				accountRate := 75.0
+				deps.usageRepo.accountSuccessTrend = &usagestats.AccountSuccessRateTrendResponse{
+					Bucket:     "1d",
+					ComputedAt: "2025-01-02T03:04:05Z",
+					Stale:      false,
+					Partial:    false,
+					Points: []usagestats.AccountSuccessRateTrendPoint{
+						{
+							BucketStart:  "2025-01-01T00:00:00Z",
+							SuccessCount: 9,
+							FailedCount:  3,
+							RequestCount: 12,
+							SuccessRate:  75,
+							Accounts: []usagestats.AccountSuccessRateTrendAccount{
+								{
+									AccountID:    101,
+									AccountName:  "acct-a",
+									SuccessCount: 6,
+									FailedCount:  2,
+									RequestCount: 8,
+									SuccessRate:  &accountRate,
+								},
+								{
+									AccountID:    102,
+									AccountName:  "acct-b",
+									SuccessCount: 3,
+									FailedCount:  1,
+									RequestCount: 4,
+									SuccessRate:  &accountRate,
+								},
+							},
+						},
+					},
+				}
+			},
+			method:     http.MethodGet,
+			path:       "/api/v1/admin/dashboard/account-success-rate-trend?granularity=1d",
+			wantStatus: http.StatusOK,
+			wantJSON: `{
+				"code": 0,
+				"message": "success",
+				"data": {
+					"bucket": "1d",
+					"computed_at": "2025-01-02T03:04:05Z",
+					"stale": false,
+					"partial": false,
+					"points": [
+						{
+							"bucket_start": "2025-01-01T00:00:00Z",
+							"success_count": 9,
+							"failed_count": 3,
+							"request_count": 12,
+							"success_rate": 75,
+							"accounts": [
+								{
+									"account_id": 101,
+									"account_name": "acct-a",
+									"success_count": 6,
+									"failed_count": 2,
+									"request_count": 8,
+									"success_rate": 75
+								},
+								{
+									"account_id": 102,
+									"account_name": "acct-b",
+									"success_count": 3,
+									"failed_count": 1,
+									"request_count": 4,
+									"success_rate": 75
+								}
+							]
+						}
+					]
+				}
+			}`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1134,6 +1319,43 @@ type contractDeps struct {
 	usageRepo   *stubUsageLogRepo
 	settingRepo *stubSettingRepo
 	redeemRepo  *stubRedeemCodeRepo
+}
+
+type stubDashboardAggRepo struct {
+	watermark time.Time
+}
+
+func (r *stubDashboardAggRepo) AggregateRange(ctx context.Context, start, end time.Time) error {
+	return nil
+}
+
+func (r *stubDashboardAggRepo) RecomputeRange(ctx context.Context, start, end time.Time) error {
+	return nil
+}
+
+func (r *stubDashboardAggRepo) GetAggregationWatermark(ctx context.Context) (time.Time, error) {
+	return r.watermark, nil
+}
+
+func (r *stubDashboardAggRepo) UpdateAggregationWatermark(ctx context.Context, aggregatedAt time.Time) error {
+	r.watermark = aggregatedAt
+	return nil
+}
+
+func (r *stubDashboardAggRepo) CleanupAggregates(ctx context.Context, hourlyCutoff, dailyCutoff time.Time) error {
+	return nil
+}
+
+func (r *stubDashboardAggRepo) CleanupUsageLogs(ctx context.Context, cutoff time.Time) error {
+	return nil
+}
+
+func (r *stubDashboardAggRepo) CleanupUsageBillingDedup(ctx context.Context, cutoff time.Time) error {
+	return nil
+}
+
+func (r *stubDashboardAggRepo) EnsureUsageLogsPartitions(ctx context.Context, now time.Time) error {
+	return nil
 }
 
 func newContractDeps(t *testing.T) *contractDeps {
@@ -1188,13 +1410,17 @@ func newContractDeps(t *testing.T) *contractDeps {
 
 	settingRepo := newStubSettingRepo()
 	settingService := service.NewSettingService(settingRepo, cfg)
+	accountUsageService := service.NewAccountUsageService(nil, usageRepo, nil, nil, nil, nil, nil, nil)
+	aggRepo := &stubDashboardAggRepo{watermark: now}
+	dashboardService := service.NewDashboardService(usageRepo, aggRepo, nil, nil)
 
 	adminService := service.NewAdminService(userRepo, groupRepo, &accountRepo, proxyRepo, apiKeyRepo, redeemRepo, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	authHandler := handler.NewAuthHandler(cfg, nil, userService, settingService, nil, redeemService, nil)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	usageHandler := handler.NewUsageHandler(usageService, apiKeyService)
+	adminDashboardHandler := adminhandler.NewDashboardHandler(dashboardService, nil)
 	adminSettingHandler := adminhandler.NewSettingHandler(settingService, nil, nil, nil, nil, nil)
-	adminAccountHandler := adminhandler.NewAccountHandler(adminService, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	adminAccountHandler := adminhandler.NewAccountHandler(adminService, nil, nil, nil, nil, nil, accountUsageService, nil, nil, nil, nil, nil, nil)
 
 	jwtAuth := func(c *gin.Context) {
 		c.Set(string(middleware.ContextKeyUser), middleware.AuthSubject{
@@ -1242,8 +1468,11 @@ func newContractDeps(t *testing.T) *contractDeps {
 
 	v1Admin := v1.Group("/admin")
 	v1Admin.Use(adminAuth)
+	v1Admin.GET("/dashboard/stats", adminDashboardHandler.GetStats)
+	v1Admin.GET("/dashboard/account-success-rate-trend", adminDashboardHandler.GetAccountSuccessRateTrend)
 	v1Admin.GET("/settings", adminSettingHandler.GetSettings)
 	v1Admin.POST("/accounts/bulk-update", adminAccountHandler.BulkUpdate)
+	v1Admin.POST("/accounts/success-rate/batch", adminAccountHandler.GetBatchSuccessRates)
 
 	return &contractDeps{
 		now:         now,
@@ -2148,7 +2377,10 @@ func (r *stubApiKeyRepo) GetRateLimitData(ctx context.Context, id int64) (*servi
 }
 
 type stubUsageLogRepo struct {
-	userLogs map[int64][]service.UsageLog
+	userLogs            map[int64][]service.UsageLog
+	dashboardStats      *usagestats.DashboardStats
+	accountSuccessRates map[int64]*usagestats.SuccessRateSummary
+	accountSuccessTrend *usagestats.AccountSuccessRateTrendResponse
 }
 
 func newStubUsageLogRepo() *stubUsageLogRepo {
@@ -2212,7 +2444,35 @@ func (r *stubUsageLogRepo) GetAccountTodayStats(ctx context.Context, accountID i
 }
 
 func (r *stubUsageLogRepo) GetDashboardStats(ctx context.Context) (*usagestats.DashboardStats, error) {
+	if r.dashboardStats != nil {
+		return r.dashboardStats, nil
+	}
 	return nil, errors.New("not implemented")
+}
+
+func (r *stubUsageLogRepo) GetAccountSuccessRateBatch(ctx context.Context, accountIDs []int64) (map[int64]*usagestats.SuccessRateSummary, error) {
+	if r.accountSuccessRates == nil {
+		return map[int64]*usagestats.SuccessRateSummary{}, nil
+	}
+	result := make(map[int64]*usagestats.SuccessRateSummary, len(accountIDs))
+	for _, accountID := range accountIDs {
+		if summary, ok := r.accountSuccessRates[accountID]; ok {
+			result[accountID] = summary
+		} else {
+			result[accountID] = &usagestats.SuccessRateSummary{}
+		}
+	}
+	return result, nil
+}
+
+func (r *stubUsageLogRepo) GetAccountSuccessRateTrend(ctx context.Context, startTime, endTime time.Time, granularity string, userTZ string, accountID int64) (*usagestats.AccountSuccessRateTrendResponse, error) {
+	if r.accountSuccessTrend != nil {
+		return r.accountSuccessTrend, nil
+	}
+	return &usagestats.AccountSuccessRateTrendResponse{
+		Bucket: granularity,
+		Points: []usagestats.AccountSuccessRateTrendPoint{},
+	}, nil
 }
 
 func (r *stubUsageLogRepo) GetUsageTrendWithFilters(ctx context.Context, startTime, endTime time.Time, granularity string, userID, apiKeyID, accountID, groupID int64, model string, requestType *int16, stream *bool, billingType *int8) ([]usagestats.TrendDataPoint, error) {

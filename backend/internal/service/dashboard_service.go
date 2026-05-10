@@ -10,6 +10,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 )
 
@@ -31,6 +32,14 @@ type DashboardStatsCache interface {
 
 type dashboardStatsRangeFetcher interface {
 	GetDashboardStatsWithRange(ctx context.Context, start, end time.Time) (*usagestats.DashboardStats, error)
+}
+
+type dashboardSuccessRateStatsReader interface {
+	GetDashboardSuccessRateStats(ctx context.Context, todayStart, historyStart time.Time) (*usagestats.SuccessRateSummary, *usagestats.SuccessRateSummary, error)
+}
+
+type accountSuccessRateTrendReader interface {
+	GetAccountSuccessRateTrend(ctx context.Context, startTime, endTime time.Time, granularity string, userTZ string, accountID int64) (*usagestats.AccountSuccessRateTrendResponse, error)
 }
 
 type dashboardStatsCacheEntry struct {
@@ -178,6 +187,18 @@ func (s *DashboardService) GetGroupUsageSummary(ctx context.Context, todayStart 
 	return results, nil
 }
 
+func (s *DashboardService) GetAccountSuccessRateTrend(ctx context.Context, startTime, endTime time.Time, granularity string, userTZ string, accountID int64) (*usagestats.AccountSuccessRateTrendResponse, error) {
+	if repo, ok := s.usageRepo.(accountSuccessRateTrendReader); ok {
+		trend, err := repo.GetAccountSuccessRateTrend(ctx, startTime, endTime, granularity, userTZ, accountID)
+		if err != nil {
+			return nil, fmt.Errorf("get account success rate trend: %w", err)
+		}
+		return trend, nil
+	}
+
+	return nil, errors.New("account success rate trend is not implemented")
+}
+
 func (s *DashboardService) getCachedDashboardStats(ctx context.Context) (*usagestats.DashboardStats, bool, error) {
 	data, err := s.cache.GetDashboardStats(ctx)
 	if err != nil {
@@ -237,14 +258,64 @@ func (s *DashboardService) refreshDashboardStatsAsync() {
 }
 
 func (s *DashboardService) fetchDashboardStats(ctx context.Context) (*usagestats.DashboardStats, error) {
+	var (
+		stats *usagestats.DashboardStats
+		err   error
+	)
 	if !s.aggEnabled {
 		if fetcher, ok := s.usageRepo.(dashboardStatsRangeFetcher); ok {
 			now := time.Now().UTC()
 			start := truncateToDayUTC(now.AddDate(0, 0, -s.aggUsageDays))
-			return fetcher.GetDashboardStatsWithRange(ctx, start, now)
+			stats, err = fetcher.GetDashboardStatsWithRange(ctx, start, now)
+			if err != nil {
+				return nil, err
+			}
+			return s.applyDashboardSuccessRatesBestEffort(ctx, stats), nil
 		}
 	}
-	return s.usageRepo.GetDashboardStats(ctx)
+	stats, err = s.usageRepo.GetDashboardStats(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return s.applyDashboardSuccessRatesBestEffort(ctx, stats), nil
+}
+
+func (s *DashboardService) applyDashboardSuccessRatesBestEffort(ctx context.Context, stats *usagestats.DashboardStats) *usagestats.DashboardStats {
+	updated, err := s.applyDashboardSuccessRates(ctx, stats)
+	if err != nil {
+		logger.LegacyPrintf("service.dashboard", "[Dashboard] success rate stats unavailable, keeping dashboard response: %v", err)
+		return stats
+	}
+	return updated
+}
+
+func (s *DashboardService) applyDashboardSuccessRates(ctx context.Context, stats *usagestats.DashboardStats) (*usagestats.DashboardStats, error) {
+	if stats == nil {
+		return nil, nil
+	}
+
+	repo, ok := s.usageRepo.(dashboardSuccessRateStatsReader)
+	if !ok {
+		return stats, nil
+	}
+
+	todayStart := timezone.Today()
+	historyStart := todayStart.AddDate(0, 0, -s.aggUsageDays)
+	today, history, err := repo.GetDashboardSuccessRateStats(ctx, todayStart, historyStart)
+	if err != nil {
+		return nil, fmt.Errorf("get dashboard success rate stats: %w", err)
+	}
+
+	if today != nil {
+		stats.TodaySuccessCount = today.SuccessCount
+		stats.TodayFailedCount = today.FailedCount
+		stats.TodaySuccessRate = today.SuccessRate
+	}
+	if history != nil {
+		stats.HistorySuccessRate = history.SuccessRate
+	}
+
+	return stats, nil
 }
 
 func (s *DashboardService) saveDashboardStatsCache(ctx context.Context, stats *usagestats.DashboardStats) {

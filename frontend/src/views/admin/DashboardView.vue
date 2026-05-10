@@ -9,21 +9,26 @@
       <template v-else-if="stats">
         <!-- Row 1: Core Stats -->
         <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <!-- Total API Keys -->
-          <div class="card p-4">
+          <!-- Request Success Rate -->
+          <div class="card overflow-hidden border border-emerald-200/70 bg-gradient-to-br from-emerald-50 via-white to-cyan-50 p-4 shadow-sm dark:border-emerald-900/40 dark:from-emerald-950/30 dark:via-dark-900 dark:to-slate-950">
             <div class="flex items-center gap-3">
-              <div class="rounded-lg bg-blue-100 p-2 dark:bg-blue-900/30">
-                <Icon name="key" size="md" class="text-blue-600 dark:text-blue-400" :stroke-width="2" />
+              <div class="rounded-lg bg-emerald-100 p-2 dark:bg-emerald-900/30">
+                <Icon name="badge" size="md" class="text-emerald-600 dark:text-emerald-300" :stroke-width="2" />
               </div>
-              <div>
+              <div class="min-w-0">
                 <p class="text-xs font-medium text-gray-500 dark:text-gray-400">
-                  {{ t('admin.dashboard.apiKeys') }}
+                  {{ t('admin.dashboard.requestSuccessRate') }}
                 </p>
-                <p class="text-xl font-bold text-gray-900 dark:text-white">
-                  {{ stats.total_api_keys }}
+                <p class="text-2xl font-bold text-gray-900 dark:text-white">
+                  {{ formatPercent(stats.today_success_rate) }}
                 </p>
-                <p class="text-xs text-green-600 dark:text-green-400">
-                  {{ stats.active_api_keys }} {{ t('common.active') }}
+                <p class="text-xs text-gray-600 dark:text-gray-300">
+                  {{ stats.today_success_count }} {{ t('admin.dashboard.successRateSuccess') }}
+                  <span class="mx-1 text-gray-400">/</span>
+                  {{ stats.today_failed_count }} {{ t('admin.dashboard.successRateFailed') }}
+                </p>
+                <p class="text-xs text-gray-500 dark:text-gray-400">
+                  {{ t('admin.dashboard.historySuccessRate') }}: {{ formatPercent(stats.history_success_rate) }}
                 </p>
               </div>
             </div>
@@ -249,6 +254,17 @@
             </div>
           </div>
 
+          <AccountSuccessRateTrend
+            :trend-data="successRateTrend"
+            :loading="successRateTrendLoading"
+            :granularity="successRateGranularity"
+            :account-options="successRateAccountOptions"
+            :selected-account-id="selectedSuccessRateAccountId"
+            @refresh="loadSuccessRateTrend"
+            @update:granularity="onSuccessRateGranularityChange"
+            @update:selected-account-id="onSuccessRateAccountChange"
+          />
+
           <!-- Charts Grid -->
           <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
             <ModelDistributionChart
@@ -301,6 +317,8 @@ import { useAppStore } from '@/stores/app'
 const { t } = useI18n()
 import { adminAPI } from '@/api/admin'
 import type {
+  AccountSuccessRateTrendResponse,
+  Account,
   DashboardStats,
   TrendDataPoint,
   ModelStat,
@@ -312,6 +330,7 @@ import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import Icon from '@/components/icons/Icon.vue'
 import DateRangePicker from '@/components/common/DateRangePicker.vue'
 import Select from '@/components/common/Select.vue'
+import AccountSuccessRateTrend from '@/components/charts/AccountSuccessRateTrend.vue'
 import ModelDistributionChart from '@/components/charts/ModelDistributionChart.vue'
 import TokenUsageTrend from '@/components/charts/TokenUsageTrend.vue'
 
@@ -343,12 +362,18 @@ const router = useRouter()
 const stats = ref<DashboardStats | null>(null)
 const loading = ref(false)
 const chartsLoading = ref(false)
+const successRateTrendLoading = ref(false)
 const userTrendLoading = ref(false)
 const rankingLoading = ref(false)
 const rankingError = ref(false)
 
 // Chart data
 const trendData = ref<TrendDataPoint[]>([])
+const successRateTrend = ref<AccountSuccessRateTrendResponse | null>(null)
+const successRateAccountOptions = ref<Array<{ value: number; label: string }>>([
+  { value: 0, label: t('admin.dashboard.allAccounts') }
+])
+const selectedSuccessRateAccountId = ref(0)
 const modelStats = ref<ModelStat[]>([])
 const userTrend = ref<UserUsageTrendPoint[]>([])
 const rankingItems = ref<UserSpendingRankingItem[]>([])
@@ -356,9 +381,11 @@ const rankingTotalActualCost = ref(0)
 const rankingTotalRequests = ref(0)
 const rankingTotalTokens = ref(0)
 let chartLoadSeq = 0
+let successRateLoadSeq = 0
 let usersTrendLoadSeq = 0
 let rankingLoadSeq = 0
 const rankingLimit = 12
+const clientTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone
 
 // Helper function to format date in local timezone
 const formatLocalDate = (date: Date): string => {
@@ -376,6 +403,7 @@ const getLast24HoursRangeDates = (): { start: string; end: string } => {
 
 // Date range
 const granularity = ref<'day' | 'hour'>('hour')
+const successRateGranularity = ref<'10m' | '1h' | '1d'>('1h')
 const defaultRange = getLast24HoursRangeDates()
 const startDate = ref(defaultRange.start)
 const endDate = ref(defaultRange.end)
@@ -555,6 +583,11 @@ const formatDuration = (ms: number): string => {
   return `${Math.round(ms)}ms`
 }
 
+const formatPercent = (value: number | null | undefined): string => {
+  if (value === null || value === undefined) return '--'
+  return `${value.toFixed(1)}%`
+}
+
 const goToUserUsage = (item: UserSpendingRankingItem) => {
   void router.push({
     path: '/admin/usage',
@@ -585,6 +618,16 @@ const onDateRangeChange = (range: {
   }
 
   loadChartData()
+}
+
+const onSuccessRateGranularityChange = (value: '10m' | '1h' | '1d') => {
+  successRateGranularity.value = value
+  loadSuccessRateTrend()
+}
+
+const onSuccessRateAccountChange = (value: number | string | boolean | null) => {
+  selectedSuccessRateAccountId.value = typeof value === 'number' ? value : 0
+  loadSuccessRateTrend()
 }
 
 // Load data
@@ -620,6 +663,49 @@ const loadDashboardSnapshot = async (includeStats: boolean) => {
       loading.value = false
       chartsLoading.value = false
     }
+  }
+}
+
+const loadSuccessRateTrend = async () => {
+  const currentSeq = ++successRateLoadSeq
+  successRateTrendLoading.value = true
+  try {
+    const response = await adminAPI.dashboard.getAccountSuccessRateTrend({
+      start_date: startDate.value,
+      end_date: endDate.value,
+      granularity: successRateGranularity.value,
+      timezone: clientTimezone,
+      account_id: selectedSuccessRateAccountId.value > 0 ? selectedSuccessRateAccountId.value : undefined
+    })
+    if (currentSeq !== successRateLoadSeq) return
+    successRateTrend.value = response
+  } catch (error) {
+    if (currentSeq !== successRateLoadSeq) return
+    console.error('Error loading account success rate trend:', error)
+    successRateTrend.value = null
+  } finally {
+    if (currentSeq === successRateLoadSeq) {
+      successRateTrendLoading.value = false
+    }
+  }
+}
+
+const loadSuccessRateAccountOptions = async () => {
+  try {
+    const response = await adminAPI.accounts.list(1, 200, { status: 'active', lite: 'true' })
+    const options = response.items
+      .filter((account: Account) => account.schedulable)
+      .map((account: Account) => ({
+        value: account.id,
+        label: account.name
+      }))
+    successRateAccountOptions.value = [
+      { value: 0, label: t('admin.dashboard.allAccounts') },
+      ...options
+    ]
+  } catch (error) {
+    console.error('Error loading success rate account options:', error)
+    successRateAccountOptions.value = [{ value: 0, label: t('admin.dashboard.allAccounts') }]
   }
 }
 
@@ -678,7 +764,9 @@ const loadUserSpendingRanking = async () => {
 
 const loadDashboardStats = async () => {
   await Promise.all([
+    loadSuccessRateAccountOptions(),
     loadDashboardSnapshot(true),
+    loadSuccessRateTrend(),
     loadUsersTrend(),
     loadUserSpendingRanking()
   ])
@@ -687,6 +775,7 @@ const loadDashboardStats = async () => {
 const loadChartData = async () => {
   await Promise.all([
     loadDashboardSnapshot(false),
+    loadSuccessRateTrend(),
     loadUsersTrend(),
     loadUserSpendingRanking()
   ])
