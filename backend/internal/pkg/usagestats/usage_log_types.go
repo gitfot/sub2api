@@ -61,15 +61,19 @@ type DashboardStats struct {
 	TotalAccountCost         float64 `json:"total_account_cost"` // 累计账号成本
 
 	// 今日 Token 使用统计
-	TodayRequests            int64   `json:"today_requests"`
-	TodayInputTokens         int64   `json:"today_input_tokens"`
-	TodayOutputTokens        int64   `json:"today_output_tokens"`
-	TodayCacheCreationTokens int64   `json:"today_cache_creation_tokens"`
-	TodayCacheReadTokens     int64   `json:"today_cache_read_tokens"`
-	TodayTokens              int64   `json:"today_tokens"`
-	TodayCost                float64 `json:"today_cost"`         // 今日标准计费
-	TodayActualCost          float64 `json:"today_actual_cost"`  // 今日实际扣除
-	TodayAccountCost         float64 `json:"today_account_cost"` // 今日账号成本
+	TodayRequests            int64    `json:"today_requests"`
+	TodayInputTokens         int64    `json:"today_input_tokens"`
+	TodayOutputTokens        int64    `json:"today_output_tokens"`
+	TodayCacheCreationTokens int64    `json:"today_cache_creation_tokens"`
+	TodayCacheReadTokens     int64    `json:"today_cache_read_tokens"`
+	TodayTokens              int64    `json:"today_tokens"`
+	TodayCost                float64  `json:"today_cost"`         // 今日标准计费
+	TodayActualCost          float64  `json:"today_actual_cost"`  // 今日实际扣除
+	TodayAccountCost         float64  `json:"today_account_cost"` // 今日账号成本
+	TodaySuccessCount        int64    `json:"today_success_count"`
+	TodayFailedCount         int64    `json:"today_failed_count"`
+	TodaySuccessRate         *float64 `json:"today_success_rate"`
+	HistorySuccessRate       *float64 `json:"history_success_rate"`
 
 	// 系统运行统计
 	AverageDurationMs float64 `json:"average_duration_ms"` // 平均响应时间
@@ -77,6 +81,14 @@ type DashboardStats struct {
 	// 性能指标
 	Rpm int64 `json:"rpm"` // 近5分钟平均每分钟请求数
 	Tpm int64 `json:"tpm"` // 近5分钟平均每分钟Token数
+}
+
+// SuccessRateSummary represents aggregated success and failure counts.
+type SuccessRateSummary struct {
+	SuccessCount int64    `json:"success_count"`
+	FailedCount  int64    `json:"failed_count"`
+	RequestCount int64    `json:"request_count"`
+	SuccessRate  *float64 `json:"success_rate"`
 }
 
 // TrendDataPoint represents a single point in trend data
@@ -363,6 +375,35 @@ type AccountUsageSummary struct {
 		Cost     float64 `json:"cost"`
 		UserCost float64 `json:"user_cost"`
 	} `json:"highest_request_day"`
+}
+
+// AccountSuccessRateTrendAccount represents the account metadata for success-rate trend data.
+type AccountSuccessRateTrendAccount struct {
+	AccountID    int64    `json:"account_id"`
+	AccountName  string   `json:"account_name"`
+	SuccessCount int64    `json:"success_count"`
+	FailedCount  int64    `json:"failed_count"`
+	RequestCount int64    `json:"request_count"`
+	SuccessRate  *float64 `json:"success_rate"`
+}
+
+// AccountSuccessRateTrendPoint represents a single time bucket in the account success-rate trend.
+type AccountSuccessRateTrendPoint struct {
+	BucketStart  string                           `json:"bucket_start"`
+	SuccessCount int64                            `json:"success_count"`
+	FailedCount  int64                            `json:"failed_count"`
+	RequestCount int64                            `json:"request_count"`
+	SuccessRate  float64                          `json:"success_rate"`
+	Accounts     []AccountSuccessRateTrendAccount `json:"accounts"`
+}
+
+// AccountSuccessRateTrendResponse represents the account success-rate trend payload.
+type AccountSuccessRateTrendResponse struct {
+	Bucket     string                         `json:"bucket"`
+	ComputedAt string                          `json:"computed_at"`
+	Stale      bool                            `json:"stale"`
+	Partial    bool                            `json:"partial"`
+	Points     []AccountSuccessRateTrendPoint   `json:"points"`
 }
 
 // AccountUsageStatsResponse represents the full usage statistics response for an account

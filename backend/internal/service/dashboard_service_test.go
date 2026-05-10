@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/stretchr/testify/require"
 )
@@ -25,6 +26,13 @@ type usageRepoStub struct {
 	rangeStart time.Time
 	rangeEnd   time.Time
 	onCall     chan struct{}
+
+	successToday        *usagestats.SuccessRateSummary
+	successHistory      *usagestats.SuccessRateSummary
+	successErr          error
+	successCalls        int32
+	successTodayStart   time.Time
+	successHistoryStart time.Time
 }
 
 func (s *usageRepoStub) GetDashboardStats(ctx context.Context) (*usagestats.DashboardStats, error) {
@@ -52,6 +60,16 @@ func (s *usageRepoStub) GetDashboardStatsWithRange(ctx context.Context, start, e
 		return s.rangeStats, nil
 	}
 	return s.stats, nil
+}
+
+func (s *usageRepoStub) GetDashboardSuccessRateStats(ctx context.Context, todayStart, historyStart time.Time) (*usagestats.SuccessRateSummary, *usagestats.SuccessRateSummary, error) {
+	atomic.AddInt32(&s.successCalls, 1)
+	s.successTodayStart = todayStart
+	s.successHistoryStart = historyStart
+	if s.successErr != nil {
+		return nil, nil, s.successErr
+	}
+	return s.successToday, s.successHistory, nil
 }
 
 type dashboardCacheStub struct {
@@ -392,4 +410,51 @@ func TestDashboardService_AggDisabled_UsesUsageLogsFallback(t *testing.T) {
 	require.Equal(t, int32(1), atomic.LoadInt32(&repo.rangeCalls))
 	require.False(t, repo.rangeEnd.IsZero())
 	require.Equal(t, truncateToDayUTC(repo.rangeEnd.AddDate(0, 0, -7)), repo.rangeStart)
+}
+
+func TestDashboardService_AggDisabled_SuccessRateErrorsDoNotFailDashboard(t *testing.T) {
+	expected := &usagestats.DashboardStats{TotalUsers: 42}
+	repo := &usageRepoStub{
+		rangeStats:  expected,
+		successErr:  errors.New("success stats unavailable"),
+	}
+	cfg := &config.Config{
+		Dashboard: config.DashboardCacheConfig{Enabled: false},
+		DashboardAgg: config.DashboardAggregationConfig{
+			Enabled: false,
+			Retention: config.DashboardAggregationRetentionConfig{
+				UsageLogsDays: 7,
+			},
+		},
+	}
+	svc := NewDashboardService(repo, nil, nil, cfg)
+
+	got, err := svc.GetDashboardStats(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, int64(42), got.TotalUsers)
+	require.Equal(t, int32(1), atomic.LoadInt32(&repo.successCalls))
+}
+
+func TestDashboardService_SuccessRateBoundariesUseApplicationTimezone(t *testing.T) {
+	repo := &usageRepoStub{
+		stats:          &usagestats.DashboardStats{TotalUsers: 1},
+		successToday:   &usagestats.SuccessRateSummary{},
+		successHistory: &usagestats.SuccessRateSummary{},
+	}
+	aggRepo := &dashboardAggregationRepoStub{watermark: time.Now().UTC()}
+	cfg := &config.Config{
+		Dashboard: config.DashboardCacheConfig{Enabled: false},
+		DashboardAgg: config.DashboardAggregationConfig{
+			Enabled: true,
+			Retention: config.DashboardAggregationRetentionConfig{
+				UsageLogsDays: 7,
+			},
+		},
+	}
+	svc := NewDashboardService(repo, aggRepo, nil, cfg)
+
+	_, err := svc.GetDashboardStats(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, timezone.Today(), repo.successTodayStart)
+	require.Equal(t, timezone.Today().AddDate(0, 0, -7), repo.successHistoryStart)
 }

@@ -1411,6 +1411,10 @@ export interface DashboardStats {
   today_cost: number // 今日标准计费
   today_actual_cost: number // 今日实际扣除
   today_account_cost: number // 今日账号成本
+  today_success_count: number
+  today_failed_count: number
+  today_success_rate: number | null
+  history_success_rate: number | null
 
   // 系统运行统计
   average_duration_ms: number // 平均响应时间
@@ -1419,6 +1423,33 @@ export interface DashboardStats {
   // 性能指标
   rpm: number // 近5分钟平均每分钟请求数
   tpm: number // 近5分钟平均每分钟Token数
+}
+
+export interface SuccessRateSummary {
+  success_count: number
+  failed_count: number
+  request_count: number
+  success_rate: number | null
+}
+
+export interface AccountSuccessRateTrendAccount extends SuccessRateSummary {
+  account_id: number
+  account_name: string
+  success_rate: number
+}
+
+export interface AccountSuccessRateTrendPoint extends SuccessRateSummary {
+  bucket_start: string
+  success_rate: number
+  accounts: AccountSuccessRateTrendAccount[]
+}
+
+export interface AccountSuccessRateTrendResponse {
+  bucket: '10m' | '1h' | '1d'
+  computed_at: string
+  stale: boolean
+  partial: boolean
+  points: AccountSuccessRateTrendPoint[]
 }
 
 export interface UsageStatsResponse {

@@ -13,6 +13,7 @@ import type {
   UserUsageTrendPoint,
   UserSpendingRankingResponse,
   UserBreakdownItem,
+  AccountSuccessRateTrendResponse,
   UsageRequestType
 } from '@/types'
 
@@ -58,6 +59,14 @@ export interface TrendParams {
   billing_type?: number | null
 }
 
+export interface AccountSuccessRateTrendParams {
+  start_date?: string
+  end_date?: string
+  granularity?: '10m' | '1h' | '1d'
+  timezone?: string
+  account_id?: number
+}
+
 export interface TrendResponse {
   trend: TrendDataPoint[]
   start_date: string
@@ -72,6 +81,16 @@ export interface TrendResponse {
  */
 export async function getUsageTrend(params?: TrendParams): Promise<TrendResponse> {
   const { data } = await apiClient.get<TrendResponse>('/admin/dashboard/trend', { params })
+  return data
+}
+
+export async function getAccountSuccessRateTrend(
+  params?: AccountSuccessRateTrendParams
+): Promise<AccountSuccessRateTrendResponse> {
+  const { data } = await apiClient.get<AccountSuccessRateTrendResponse>(
+    '/admin/dashboard/account-success-rate-trend',
+    { params }
+  )
   return data
 }
 
@@ -332,6 +351,7 @@ export const dashboardAPI = {
   getApiKeyUsageTrend,
   getUserUsageTrend,
   getUserSpendingRanking,
+  getAccountSuccessRateTrend,
   getBatchUsersUsage,
   getBatchApiKeysUsage
 }

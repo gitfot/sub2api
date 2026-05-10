@@ -19,7 +19,8 @@ import type {
   CodexSessionImportRequest,
   CodexSessionImportResult,
   CheckMixedChannelRequest,
-  CheckMixedChannelResponse
+  CheckMixedChannelResponse,
+  SuccessRateSummary
 } from '@/types'
 
 /**
@@ -434,6 +435,22 @@ export async function getTodayStats(id: number): Promise<WindowStats> {
   return data
 }
 
+export interface BatchSuccessRateResponse {
+  stats: Record<string, SuccessRateSummary>
+}
+
+/**
+ * 批量获取多个账号的历史成功率
+ * @param accountIds - 账号 ID 列表
+ * @returns 以账号 ID（字符串）为键的成功率摘要映射
+ */
+export async function getBatchSuccessRates(accountIds: number[]): Promise<BatchSuccessRateResponse> {
+  const { data } = await apiClient.post<BatchSuccessRateResponse>('/admin/accounts/success-rate/batch', {
+    account_ids: accountIds
+  })
+  return data
+}
+
 export interface BatchTodayStatsResponse {
   stats: Record<string, WindowStats>
 }
@@ -721,6 +738,7 @@ export const accountsAPI = {
   clearError,
   getUsage,
   getTodayStats,
+  getBatchSuccessRates,
   getBatchTodayStats,
   clearRateLimit,
   recoverState,
