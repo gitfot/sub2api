@@ -59,6 +59,20 @@ func TestMigrationsRunner_IsIdempotent_AndSchemaIsUpToDate(t *testing.T) {
 	requireColumn(t, tx, "usage_billing_dedup_archive", "request_fingerprint", "character varying", 64, false)
 	requireIndex(t, tx, "usage_billing_dedup_archive", "usage_billing_dedup_archive_pkey")
 
+	// account_request_stats_10m aggregate table
+	var accountRequestStatsRegclass sql.NullString
+	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.account_request_stats_10m')").Scan(&accountRequestStatsRegclass))
+	require.True(t, accountRequestStatsRegclass.Valid, "expected account_request_stats_10m table to exist")
+	requireColumn(t, tx, "account_request_stats_10m", "bucket_start", "timestamp with time zone", 0, false)
+	requireColumn(t, tx, "account_request_stats_10m", "account_id", "bigint", 0, false)
+	requireColumn(t, tx, "account_request_stats_10m", "success_count", "bigint", 0, false)
+	requireColumn(t, tx, "account_request_stats_10m", "failed_count", "bigint", 0, false)
+	requireColumn(t, tx, "account_request_stats_10m", "request_count", "bigint", 0, false)
+	requireColumn(t, tx, "account_request_stats_10m", "computed_at", "timestamp with time zone", 0, false)
+	requireConstraintDefinitionContains(t, tx, "account_request_stats_10m", "account_request_stats_10m_request_count_check", "request_count", "success_count", "failed_count")
+	requireIndex(t, tx, "account_request_stats_10m", "idx_account_request_stats_10m_account_bucket_desc")
+	requireIndex(t, tx, "account_request_stats_10m", "idx_account_request_stats_10m_bucket_desc")
+
 	// settings table should exist
 	var settingsRegclass sql.NullString
 	require.NoError(t, tx.QueryRowContext(context.Background(), "SELECT to_regclass('public.settings')").Scan(&settingsRegclass))

@@ -178,6 +178,22 @@ func (s *DashboardService) GetGroupUsageSummary(ctx context.Context, todayStart 
 	return results, nil
 }
 
+func (s *DashboardService) GetAccountSuccessRateTrend(ctx context.Context, startTime, endTime time.Time, granularity string, userTZ string) (*usagestats.AccountSuccessRateTrendResponse, error) {
+	type accountSuccessRateTrendRepository interface {
+		GetAccountSuccessRateTrend(ctx context.Context, startTime, endTime time.Time, granularity string, userTZ string) (*usagestats.AccountSuccessRateTrendResponse, error)
+	}
+
+	if repo, ok := s.usageRepo.(accountSuccessRateTrendRepository); ok {
+		trend, err := repo.GetAccountSuccessRateTrend(ctx, startTime, endTime, granularity, userTZ)
+		if err != nil {
+			return nil, fmt.Errorf("get account success rate trend: %w", err)
+		}
+		return trend, nil
+	}
+
+	return nil, errors.New("account success rate trend is not implemented")
+}
+
 func (s *DashboardService) getCachedDashboardStats(ctx context.Context) (*usagestats.DashboardStats, bool, error) {
 	data, err := s.cache.GetDashboardStats(ctx)
 	if err != nil {
