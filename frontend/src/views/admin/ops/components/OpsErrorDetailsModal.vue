@@ -252,6 +252,7 @@ watch(
             :loading="loading"
             :page="page"
             :page-size="pageSize"
+            :force-upstream="props.errorType === 'upstream'"
             @openErrorDetail="emit('openErrorDetail', $event)"
 
             @update:page="page = $event"

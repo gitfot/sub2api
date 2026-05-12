@@ -78,7 +78,8 @@ error_base AS (
     is_business_limited AS is_business_limited,
     error_owner AS error_owner,
     status_code AS client_status_code,
-    COALESCE(upstream_status_code, status_code, 0) AS effective_status_code
+    ` + opsUpstreamEffectiveStatusSQL("") + ` AS effective_status_code,
+    ` + opsProviderUpstreamErrorPredicateSQL("") + ` AS is_provider_upstream_error
   FROM ops_error_logs
   -- Exclude count_tokens requests from error metrics as they are informational probes
   WHERE created_at >= $1 AND created_at < $2
@@ -92,9 +93,9 @@ error_agg AS (
     COUNT(*) FILTER (WHERE COALESCE(client_status_code, 0) >= 400) AS error_count_total,
     COUNT(*) FILTER (WHERE COALESCE(client_status_code, 0) >= 400 AND is_business_limited) AS business_limited_count,
     COUNT(*) FILTER (WHERE COALESCE(client_status_code, 0) >= 400 AND NOT is_business_limited) AS error_count_sla,
-    COUNT(*) FILTER (WHERE error_owner = 'provider' AND NOT is_business_limited AND COALESCE(effective_status_code, 0) NOT IN (429, 529)) AS upstream_error_count_excl_429_529,
-    COUNT(*) FILTER (WHERE error_owner = 'provider' AND NOT is_business_limited AND COALESCE(effective_status_code, 0) = 429) AS upstream_429_count,
-    COUNT(*) FILTER (WHERE error_owner = 'provider' AND NOT is_business_limited AND COALESCE(effective_status_code, 0) = 529) AS upstream_529_count
+    COUNT(*) FILTER (WHERE is_provider_upstream_error AND NOT is_business_limited AND COALESCE(effective_status_code, 0) NOT IN (429, 529)) AS upstream_error_count_excl_429_529,
+    COUNT(*) FILTER (WHERE is_provider_upstream_error AND NOT is_business_limited AND COALESCE(effective_status_code, 0) = 429) AS upstream_429_count,
+    COUNT(*) FILTER (WHERE is_provider_upstream_error AND NOT is_business_limited AND COALESCE(effective_status_code, 0) = 529) AS upstream_529_count
   FROM error_base
   GROUP BY GROUPING SETS (
     (bucket_start),

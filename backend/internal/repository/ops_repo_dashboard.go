@@ -866,9 +866,9 @@ SELECT
   COALESCE(COUNT(*) FILTER (WHERE COALESCE(status_code, 0) >= 400), 0) AS error_total,
   COALESCE(COUNT(*) FILTER (WHERE COALESCE(status_code, 0) >= 400 AND is_business_limited), 0) AS business_limited,
   COALESCE(COUNT(*) FILTER (WHERE COALESCE(status_code, 0) >= 400 AND NOT is_business_limited), 0) AS error_sla,
-  COALESCE(COUNT(*) FILTER (WHERE error_owner = 'provider' AND NOT is_business_limited AND COALESCE(upstream_status_code, status_code, 0) NOT IN (429, 529)), 0) AS upstream_excl,
-  COALESCE(COUNT(*) FILTER (WHERE error_owner = 'provider' AND NOT is_business_limited AND COALESCE(upstream_status_code, status_code, 0) = 429), 0) AS upstream_429,
-  COALESCE(COUNT(*) FILTER (WHERE error_owner = 'provider' AND NOT is_business_limited AND COALESCE(upstream_status_code, status_code, 0) = 529), 0) AS upstream_529
+  COALESCE(COUNT(*) FILTER (WHERE ` + opsProviderUpstreamErrorPredicateSQL("") + ` AND NOT is_business_limited AND ` + opsUpstreamEffectiveStatusSQL("") + ` NOT IN (429, 529)), 0) AS upstream_excl,
+  COALESCE(COUNT(*) FILTER (WHERE ` + opsProviderUpstreamErrorPredicateSQL("") + ` AND NOT is_business_limited AND ` + opsUpstreamEffectiveStatusSQL("") + ` = 429), 0) AS upstream_429,
+  COALESCE(COUNT(*) FILTER (WHERE ` + opsProviderUpstreamErrorPredicateSQL("") + ` AND NOT is_business_limited AND ` + opsUpstreamEffectiveStatusSQL("") + ` = 529), 0) AS upstream_529
 FROM ops_error_logs
 ` + where
 
@@ -1026,6 +1026,26 @@ func buildErrorWhere(filter *service.OpsDashboardFilter, start, end time.Time, s
 
 	where = "WHERE " + strings.Join(clauses, " AND ")
 	return where, args, idx
+}
+
+func opsSQLColumn(alias string, name string) string {
+	if strings.TrimSpace(alias) == "" {
+		return name
+	}
+	return alias + "." + name
+}
+
+func opsUpstreamEventStatusSQL(alias string) string {
+	upstreamErrors := opsSQLColumn(alias, "upstream_errors")
+	return `(SELECT MAX(CASE WHEN (ev->>'upstream_status_code') ~ '^[0-9]+$' THEN (ev->>'upstream_status_code')::int ELSE NULL END) FROM jsonb_array_elements(COALESCE(NULLIF(` + upstreamErrors + `, 'null'::jsonb), '[]'::jsonb)) AS ev)`
+}
+
+func opsUpstreamEffectiveStatusSQL(alias string) string {
+	return `COALESCE(` + opsSQLColumn(alias, "upstream_status_code") + `, ` + opsUpstreamEventStatusSQL(alias) + `, ` + opsSQLColumn(alias, "status_code") + `, 0)`
+}
+
+func opsProviderUpstreamErrorPredicateSQL(alias string) string {
+	return `(LOWER(COALESCE(` + opsSQLColumn(alias, "error_owner") + `, '')) = 'provider' OR COALESCE(` + opsSQLColumn(alias, "upstream_status_code") + `, 0) >= 400 OR COALESCE(` + opsUpstreamEventStatusSQL(alias) + `, 0) >= 400)`
 }
 
 func floatToIntPtr(v sql.NullFloat64) *int {

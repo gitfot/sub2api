@@ -46,3 +46,26 @@ func TestBuildOpsErrorLogsWhere_UserQueryUsesExistsSubquery(t *testing.T) {
 		t.Fatalf("where should include EXISTS user email condition: %s", where)
 	}
 }
+
+func TestBuildOpsErrorLogsWhere_UpstreamPhaseIncludesUpstreamContextRows(t *testing.T) {
+	filter := &service.OpsErrorLogFilter{
+		Phase: "upstream",
+	}
+
+	where, args := buildOpsErrorLogsWhere(filter)
+	if where == "" {
+		t.Fatalf("where should not be empty")
+	}
+	if len(args) != 1 {
+		t.Fatalf("args len = %d, want 1", len(args))
+	}
+	if !strings.Contains(where, "e.error_phase") {
+		t.Fatalf("where should still include upstream phase matching: %s", where)
+	}
+	if !strings.Contains(where, "e.upstream_status_code") {
+		t.Fatalf("where should include upstream status context matching: %s", where)
+	}
+	if !strings.Contains(where, "e.upstream_errors") {
+		t.Fatalf("where should include inline upstream_errors context matching: %s", where)
+	}
+}

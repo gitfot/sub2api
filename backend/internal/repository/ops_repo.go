@@ -1309,7 +1309,11 @@ func buildOpsErrorLogsWhere(filter *service.OpsErrorLogFilter) (string, []any) {
 	}
 	if phase := phaseFilter; phase != "" {
 		args = append(args, phase)
-		clauses = append(clauses, "e.error_phase = $"+itoa(len(args)))
+		if phase == "upstream" {
+			clauses = append(clauses, "(LOWER(COALESCE(e.error_phase,'')) = $"+itoa(len(args))+" OR "+opsProviderUpstreamErrorPredicateSQL("e")+")")
+		} else {
+			clauses = append(clauses, "LOWER(COALESCE(e.error_phase,'')) = $"+itoa(len(args)))
+		}
 	}
 	if filter != nil {
 		if owner := strings.TrimSpace(strings.ToLower(filter.Owner)); owner != "" {
