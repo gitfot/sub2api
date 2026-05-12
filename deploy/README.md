@@ -17,7 +17,7 @@ This directory contains files for deploying Sub2API on Linux servers.
 | `docker-compose.local.yml` | Docker Compose configuration (local directories, easy migration) |
 | `docker-deploy.sh` | **One-click Docker deployment script (recommended)** |
 | `.env.example` | Docker environment variables template |
-| `DOCKER.md` | Docker Hub documentation |
+| `DOCKER.md` | Docker deployment reference |
 | `install.sh` | One-click binary installation script |
 | `install-datamanagementd.sh` | datamanagementd 一键安装脚本 |
 | `sub2api.service` | Systemd service unit file |
@@ -28,6 +28,9 @@ This directory contains files for deploying Sub2API on Linux servers.
 ---
 
 ## Docker Deployment (Recommended)
+
+The compose files default to pulling `${SUB2API_IMAGE:-ghcr.io/gitfot/sub2api:latest}`.
+Set `SUB2API_IMAGE` in `.env` if you want to pin a specific tag or use another registry mirror.
 
 ### Method 1: One-Click Deployment (Recommended)
 

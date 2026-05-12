@@ -161,4 +161,13 @@ func TestIsMigrationChecksumCompatible(t *testing.T) {
 		)
 		require.False(t, ok)
 	})
+
+	t.Run("136历史checksum可兼容新的10分钟聚合迁移版本", func(t *testing.T) {
+		ok := isMigrationChecksumCompatible(
+			"136_add_account_request_stats_10m.sql",
+			"390ee1eb206d28bc6cc440031500a0618dd9968308f59d80694c20cb820f6d53",
+			"ce8eeabe5fddb84bd1a2f238d13f489a6a38be3932a14faa3294c0272715dc45",
+		)
+		require.True(t, ok)
+	})
 }
