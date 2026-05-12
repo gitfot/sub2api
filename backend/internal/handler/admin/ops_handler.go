@@ -362,7 +362,7 @@ func (h *OpsHandler) ListRequestErrorUpstreamErrors(c *gin.Context) {
 	}
 	filter.View = "all"
 	filter.Phase = "upstream"
-	filter.Owner = "provider"
+	filter.Owner = strings.TrimSpace(c.Query("error_owner"))
 	filter.Source = strings.TrimSpace(c.Query("error_source"))
 	filter.Query = strings.TrimSpace(c.Query("q"))
 
@@ -442,7 +442,7 @@ func (h *OpsHandler) ListUpstreamErrors(c *gin.Context) {
 
 	filter.View = parseOpsViewParam(c)
 	filter.Phase = "upstream"
-	filter.Owner = "provider"
+	filter.Owner = strings.TrimSpace(c.Query("error_owner"))
 	filter.Source = strings.TrimSpace(c.Query("error_source"))
 	filter.Query = strings.TrimSpace(c.Query("q"))
 

@@ -1394,6 +1394,41 @@ func classifyOpsErrorSource(phase string, message string) string {
 	}
 }
 
+func opsHasProviderUpstreamErrorContext(c *gin.Context) bool {
+	if c == nil {
+		return false
+	}
+	if v, ok := c.Get(service.OpsUpstreamStatusCodeKey); ok {
+		switch t := v.(type) {
+		case int:
+			if t >= 400 {
+				return true
+			}
+		case int64:
+			if t >= 400 {
+				return true
+			}
+		}
+	}
+	if v, ok := c.Get(service.OpsUpstreamErrorsKey); ok {
+		if events, ok := v.([]*service.OpsUpstreamErrorEvent); ok {
+			for _, ev := range events {
+				if ev != nil && ev.UpstreamStatusCode >= 400 {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func opsApplyProviderAttributionIfUpstreamError(c *gin.Context, phase, owner, source string) (string, string, string) {
+	if !opsHasProviderUpstreamErrorContext(c) {
+		return phase, owner, source
+	}
+	return "upstream", "provider", "upstream_http"
+}
+
 func truncateString(s string, max int) string {
 	if max <= 0 {
 		return ""

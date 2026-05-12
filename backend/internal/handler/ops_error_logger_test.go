@@ -932,6 +932,67 @@ func TestSetOpsEndpointContext_NilContext(t *testing.T) {
 	})
 }
 
+func TestOpsHasProviderUpstreamErrorContext_StatusCode400(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Set(service.OpsUpstreamStatusCodeKey, 400)
+
+	require.True(t, opsHasProviderUpstreamErrorContext(c))
+}
+
+func TestOpsHasProviderUpstreamErrorContext_EventStatusCode400(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{
+		{AccountID: 101, UpstreamStatusCode: 400, Message: "openai_error"},
+	})
+
+	require.True(t, opsHasProviderUpstreamErrorContext(c))
+}
+
+func TestOpsHasProviderUpstreamErrorContext_NoUpstreamError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	require.False(t, opsHasProviderUpstreamErrorContext(c))
+
+	c.Set(service.OpsUpstreamStatusCodeKey, 200)
+	require.False(t, opsHasProviderUpstreamErrorContext(c))
+
+	c.Set(service.OpsUpstreamErrorsKey, []*service.OpsUpstreamErrorEvent{
+		{AccountID: 101, UpstreamStatusCode: 0, Message: "dial timeout"},
+	})
+	require.False(t, opsHasProviderUpstreamErrorContext(c))
+}
+
+func TestOpsApplyProviderAttributionIfUpstreamError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Set(service.OpsUpstreamStatusCodeKey, int64(422))
+
+	phase, owner, source := opsApplyProviderAttributionIfUpstreamError(c, "request", "client", "client_request")
+
+	require.Equal(t, "upstream", phase)
+	require.Equal(t, "provider", owner)
+	require.Equal(t, "upstream_http", source)
+}
+
+func TestOpsApplyProviderAttributionIfUpstreamError_KeepsClientAttributionWithoutUpstream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+
+	phase, owner, source := opsApplyProviderAttributionIfUpstreamError(c, "request", "client", "client_request")
+
+	require.Equal(t, "request", phase)
+	require.Equal(t, "client", owner)
+	require.Equal(t, "client_request", source)
+}
+
 func TestGetOpsAPIKeyFallsBackToOpsFallbackKey(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	rec := httptest.NewRecorder()

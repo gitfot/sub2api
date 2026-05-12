@@ -241,6 +241,7 @@ import { getSeverityClass, formatDateTime } from '../utils/opsFormatters'
 const { t } = useI18n()
 
 function isUpstreamRow(log: OpsErrorLog): boolean {
+  if (props.forceUpstream) return true
   const phase = String(log.phase || '').toLowerCase()
   const owner = String(log.error_owner || '').toLowerCase()
   return phase === 'upstream' && owner === 'provider'
@@ -314,6 +315,7 @@ interface Props {
   loading: boolean
   page: number
   pageSize: number
+  forceUpstream?: boolean
 }
 
 interface Emits {
@@ -322,7 +324,7 @@ interface Emits {
   (e: 'update:pageSize', value: number): void
 }
 
-defineProps<Props>()
+const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
 function getStatusClass(code: number): string {
