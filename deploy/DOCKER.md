@@ -1,76 +1,52 @@
-# Sub2API Docker Image
+# Sub2API Docker Deployment
 
-Sub2API is an AI API Gateway Platform for distributing and managing AI product subscription API quotas.
+Sub2API publishes a container image that is intended to be used with the compose files in this directory.
 
-## Quick Start
+## Image
+
+The default image used by `deploy/docker-compose*.yml` is:
+
+```text
+ghcr.io/gitfot/sub2api:latest
+```
+
+If you want to pin a tag or use a mirror, set `SUB2API_IMAGE` in `.env` before starting compose.
+
+## Recommended Usage
+
+Use the checked-in compose files instead of a handwritten `docker run` command so PostgreSQL, Redis, health checks, and persisted data stay aligned with the application defaults.
+
+From the `deploy/` directory:
 
 ```bash
-docker run -d \
-  --name sub2api \
-  -p 8080:8080 \
-  -e DATABASE_URL="postgres://user:pass@host:5432/sub2api" \
-  -e REDIS_URL="redis://host:6379" \
-  weishaw/sub2api:latest
+cp .env.example .env
+docker compose -f docker-compose.local.yml up -d
 ```
 
-## Docker Compose
+Available compose variants:
 
-```yaml
-version: '3.8'
+- `docker-compose.yml`: named Docker volumes for app, PostgreSQL, and Redis.
+- `docker-compose.local.yml`: bind-mounted local directories for easier backup and migration.
+- `docker-compose.standalone.yml`: only runs Sub2API and expects external PostgreSQL and Redis.
+- `docker-compose.dev.yml`: builds the image from local source for development verification.
 
-services:
-  sub2api:
-    image: weishaw/sub2api:latest
-    ports:
-      - "8080:8080"
-    environment:
-      - DATABASE_URL=postgres://postgres:postgres@db:5432/sub2api?sslmode=disable
-      - REDIS_URL=redis://redis:6379
-    depends_on:
-      - db
-      - redis
+## Important Environment Variables
 
-  db:
-    image: postgres:15-alpine
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=sub2api
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
-  redis:
-    image: redis:7-alpine
-    volumes:
-      - redis_data:/data
-
-volumes:
-  postgres_data:
-  redis_data:
-```
-
-## Environment Variables
+These are the main variables most deployments care about. See `.env.example` for the full list.
 
 | Variable | Description | Required | Default |
 |----------|-------------|----------|---------|
-| `DATABASE_URL` | PostgreSQL connection string | Yes | - |
-| `REDIS_URL` | Redis connection string | Yes | - |
-| `PORT` | Server port | No | `8080` |
-| `GIN_MODE` | Gin framework mode (`debug`/`release`) | No | `release` |
+| `SUB2API_IMAGE` | Image to pull for the `sub2api` service | No | `ghcr.io/gitfot/sub2api:latest` |
+| `POSTGRES_PASSWORD` | PostgreSQL password for bundled database deployments | Yes | - |
+| `SERVER_PORT` | Host port mapped to container port `8080` | No | `8080` |
+| `SERVER_MODE` | Application mode (`release` or `debug`) | No | `release` |
+| `JWT_SECRET` | Fixed JWT secret to preserve sessions across restarts | Recommended | auto-generated if empty |
+| `TOTP_ENCRYPTION_KEY` | Fixed key for persisted 2FA secrets | Recommended | auto-generated if empty |
+| `ADMIN_EMAIL` | Initial admin email | No | `admin@sub2api.local` |
+| `ADMIN_PASSWORD` | Initial admin password | No | auto-generated if empty |
 
-## Supported Architectures
+## Notes
 
-- `linux/amd64`
-- `linux/arm64`
-
-## Tags
-
-- `latest` - Latest stable release
-- `x.y.z` - Specific version
-- `x.y` - Latest patch of minor version
-- `x` - Latest minor of major version
-
-## Links
-
-- [GitHub Repository](https://github.com/weishaw/sub2api)
-- [Documentation](https://github.com/weishaw/sub2api#readme)
+- The root `Dockerfile` is the single source of truth for container builds.
+- `docker-compose.dev.yml` builds from local source with that root `Dockerfile`.
+- Production compose files pull a prebuilt image instead of building locally.
