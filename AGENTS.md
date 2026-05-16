@@ -28,15 +28,15 @@ For local source runs on Linux, prefer matching the checked-in toolchain and con
 Install `Go 1.26.3` (matches `backend/go.mod`), `Node.js 18+`, `pnpm`, `PostgreSQL 15+`, and `Redis 7+`.
 
 ```bash
+# For an embedded single-binary run, create `backend/config.yaml` from `deploy/config.example.yaml`, fill in PostgreSQL, Redis, and `jwt.secret`, then start from `backend/` with:
+cd backend
+go build -tags embed -o sub2api ./cmd/server
+go run ./cmd/server
+
 # Build the frontend first so static assets are emitted to `backend/internal/web/dist`:
 cd frontend
 pnpm install && pnpm build
 pnpm dev
-# For an embedded single-binary run, create `backend/config.yaml` from `deploy/config.example.yaml`, fill in PostgreSQL, Redis, and `jwt.secret`, then start from `backend/` with:
-cd backend
-go build -tags embed -o sub2api ./cmd/server
-# For day-to-day development, run the backend separately with 
-go run ./cmd/server
 
 ```
 The Vite dev server defaults to port `3000` and proxies `/api`, `/v1`, and `/setup` to `http://localhost:8080`; keep the backend on port `8080` unless you also update the frontend proxy settings.
