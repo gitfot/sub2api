@@ -30,6 +30,9 @@ RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
 COPY frontend/package.json frontend/pnpm-lock.yaml frontend/.npmrc frontend/pnpm-workspace.yaml ./
 RUN pnpm install --frozen-lockfile
 
+# Copy legal markdown files imported at build time
+COPY docs/legal/ /app/docs/legal/
+
 # Copy frontend source and build
 COPY frontend/ ./
 RUN pnpm run build
